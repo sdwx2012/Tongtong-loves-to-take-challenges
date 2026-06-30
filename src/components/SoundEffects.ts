@@ -1,31 +1,82 @@
 // Web Audio API Sound Synthesizer for Kids Math Game
 // Highly reliable, offline-first, loads instantly without external assets
 
-let audioCtx: AudioContext | null = null;
+let audioCtx: any = null;
 
 function getAudioContext() {
+  if (typeof window === "undefined") return null;
   if (!audioCtx) {
-    audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    try {
+      const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (AudioContextClass) {
+        audioCtx = new AudioContextClass();
+      }
+    } catch (e) {
+      console.warn("Web Audio API not supported in this browser:", e);
+    }
   }
-  if (audioCtx.state === "suspended") {
-    audioCtx.resume();
+  
+  if (audioCtx) {
+    try {
+      if (audioCtx.state === "suspended" && typeof audioCtx.resume === "function") {
+        audioCtx.resume();
+      }
+    } catch (e) {
+      console.warn("Could not resume audio context:", e);
+    }
   }
   return audioCtx;
+}
+
+// Global user interaction gesture to warm up/unlock AudioContext on older mobile devices (iOS/Android Safari/Chrome)
+if (typeof window !== "undefined") {
+  const unlockAudio = () => {
+    try {
+      const ctx = getAudioContext();
+      if (ctx && ctx.state === "suspended" && typeof ctx.resume === "function") {
+        ctx.resume().then(() => {
+          cleanup();
+        }).catch(() => {
+          // If promise fails, still try to cleanup
+          cleanup();
+        });
+      } else {
+        cleanup();
+      }
+    } catch (e) {
+      cleanup();
+    }
+  };
+
+  const cleanup = () => {
+    window.removeEventListener("click", unlockAudio);
+    window.removeEventListener("touchstart", unlockAudio);
+    window.removeEventListener("touchend", unlockAudio);
+  };
+
+  window.addEventListener("click", unlockAudio);
+  window.addEventListener("touchstart", unlockAudio);
+  window.addEventListener("touchend", unlockAudio);
 }
 
 export const SoundEffects = {
   playClick() {
     try {
       const ctx = getAudioContext();
+      if (!ctx) return;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
 
       osc.type = "sine";
       osc.frequency.setValueAtTime(400, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(150, ctx.currentTime + 0.1);
+      if (typeof osc.frequency.exponentialRampToValueAtTime === "function") {
+        osc.frequency.exponentialRampToValueAtTime(150, ctx.currentTime + 0.1);
+      }
 
       gain.gain.setValueAtTime(0.15, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+      if (typeof gain.gain.exponentialRampToValueAtTime === "function") {
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+      }
 
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -40,6 +91,7 @@ export const SoundEffects = {
   playCorrect() {
     try {
       const ctx = getAudioContext();
+      if (!ctx) return;
       const now = ctx.currentTime;
 
       // Magical sparkling chime sequence (Arpeggio)
@@ -52,8 +104,12 @@ export const SoundEffects = {
         osc.frequency.setValueAtTime(freq, now + index * 0.08);
 
         gain.gain.setValueAtTime(0, now + index * 0.08);
-        gain.gain.linearRampToValueAtTime(0.15, now + index * 0.08 + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.08 + 0.35);
+        if (typeof gain.gain.linearRampToValueAtTime === "function") {
+          gain.gain.linearRampToValueAtTime(0.15, now + index * 0.08 + 0.02);
+        }
+        if (typeof gain.gain.exponentialRampToValueAtTime === "function") {
+          gain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.08 + 0.35);
+        }
 
         osc.connect(gain);
         gain.connect(ctx.destination);
@@ -69,6 +125,7 @@ export const SoundEffects = {
   playIncorrect() {
     try {
       const ctx = getAudioContext();
+      if (!ctx) return;
       const now = ctx.currentTime;
 
       const osc = ctx.createOscillator();
@@ -76,10 +133,14 @@ export const SoundEffects = {
 
       osc.type = "triangle";
       osc.frequency.setValueAtTime(180, now);
-      osc.frequency.linearRampToValueAtTime(110, now + 0.3);
+      if (typeof osc.frequency.linearRampToValueAtTime === "function") {
+        osc.frequency.linearRampToValueAtTime(110, now + 0.3);
+      }
 
       gain.gain.setValueAtTime(0.2, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      if (typeof gain.gain.exponentialRampToValueAtTime === "function") {
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      }
 
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -94,6 +155,7 @@ export const SoundEffects = {
   playLevelUp() {
     try {
       const ctx = getAudioContext();
+      if (!ctx) return;
       const now = ctx.currentTime;
 
       const chord = [261.63, 329.63, 392.00, 523.25]; // C4, E4, G4, C5
@@ -103,11 +165,17 @@ export const SoundEffects = {
 
         osc.type = "sine";
         osc.frequency.setValueAtTime(freq, now);
-        osc.frequency.exponentialRampToValueAtTime(freq * 2, now + 0.5);
+        if (typeof osc.frequency.exponentialRampToValueAtTime === "function") {
+          osc.frequency.exponentialRampToValueAtTime(freq * 2, now + 0.5);
+        }
 
         gain.gain.setValueAtTime(0.01, now);
-        gain.gain.linearRampToValueAtTime(0.08, now + 0.1);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+        if (typeof gain.gain.linearRampToValueAtTime === "function") {
+          gain.gain.linearRampToValueAtTime(0.08, now + 0.1);
+        }
+        if (typeof gain.gain.exponentialRampToValueAtTime === "function") {
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+        }
 
         osc.connect(gain);
         gain.connect(ctx.destination);
@@ -123,6 +191,7 @@ export const SoundEffects = {
   playWin() {
     try {
       const ctx = getAudioContext();
+      if (!ctx) return;
       const now = ctx.currentTime;
 
       // Trumpet victory fanfare
@@ -148,8 +217,12 @@ export const SoundEffects = {
         osc2.frequency.setValueAtTime(note.freq * 1.005, now + timeOffset); // subtle detune for fullness
 
         gain.gain.setValueAtTime(0, now + timeOffset);
-        gain.gain.linearRampToValueAtTime(0.08, now + timeOffset + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + timeOffset + note.duration - 0.02);
+        if (typeof gain.gain.linearRampToValueAtTime === "function") {
+          gain.gain.linearRampToValueAtTime(0.08, now + timeOffset + 0.02);
+        }
+        if (typeof gain.gain.exponentialRampToValueAtTime === "function") {
+          gain.gain.exponentialRampToValueAtTime(0.001, now + timeOffset + note.duration - 0.02);
+        }
 
         osc1.connect(gain);
         osc2.connect(gain);

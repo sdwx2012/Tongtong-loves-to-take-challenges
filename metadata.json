@@ -1,5 +1,5 @@
 {
-  "name": "Remix: 童童爱闯关",
+  "name": "童童爱闯关",
   "description": "面向儿童的经典启蒙奥数动画闯关游戏，包含鸡兔同笼、火柴棒游戏、植树问题等多个经典主题，采用全交互式卡通动画和生动的原理解析，帮助孩子们在玩耍中锻炼逻辑思维。",
   "requestFramePermissions": [
     "microphone"

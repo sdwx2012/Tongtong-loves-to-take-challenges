@@ -30,6 +30,7 @@ import { WaterPouringGame } from "./components/games/WaterPouringGame";
 import { TangPoetryGame } from "./components/games/TangPoetryGame";
 import { SimpleOlympiadQuiz } from "./components/games/SimpleOlympiadQuiz";
 import { getRandomizedLevel } from "./utils/randomizer";
+import { smoothScrollTo, smoothScrollElementIntoView } from "./utils/scroll";
 
 const DEFAULT_PROGRESS: UserProgress = {
   completedLevels: {},
@@ -67,6 +68,7 @@ export default function App() {
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const ttsAbortControllerRef = useRef<AbortController | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const globalAudioRef = useRef<HTMLAudioElement | null>(null);
   const isProceedingRef = useRef(false);
 
   // Cleanup Web Audio context on unmount
@@ -133,183 +135,223 @@ export default function App() {
     }
   }, []);
 
-  // Voice Read Aloud (Gemini AI TTS with Web Speech Fallback)
-  const speakText = async (text: string) => {
-    // 1. Stop all current speech and fetch requests immediately
-    stopSpeaking();
-
-    if (isMuted) return;
-
-    // Clean up text for TTS (remove brackets, math symbols, emoji markers that sound weird in spoken Chinese)
-    const cleanedText = text
-      .replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, "")
-      .replace(/[❌❓⭐🪙🌟🎉🐥🪵🌳🐼🍎🟣💡🗺️🚀🔒🧩💪👀✨🎈]/g, "")
-      .replace(/[【】\[\]（）()]/g, " ") // Clean brackets to prevent reading them out or causing awkward pauses
-      .replace(/A/g, "甲")
-      .replace(/B/g, "乙")
-      .replace(/C/g, "丙")
-      .replace(/=/g, "等于")
-      .replace(/\+/g, "加上")
-      .replace(/-/g, "减去")
-      .replace(/\*/g, "乘以")
-      .replace(/\//g, "除以");
-
-    // Initialize an AbortController for this fetch request
-    const controller = new AbortController();
-    ttsAbortControllerRef.current = controller;
-
-    try {
-      setIsPlayingSpeech(true);
-      // Select best voice: 'Kore' is a beautiful, warm female voice ideal for kids
-      const voiceName = "Kore";
-
-      const response = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: cleanedText, voice: voiceName }),
-        signal: controller.signal
-      });
-
-      if (!response.ok) {
-        throw new Error("Gemini TTS server returned an error.");
-      }
-
-      const data = await response.json();
-      if (!data.audio) {
-        throw new Error("No audio returned from server.");
-      }
-
-      // Play the high-fidelity Gemini audio
-      const success = await playGeminiAudioBuffer(data.audio);
-      if (success) {
-        setIsUsingGeminiVoice(true);
-        return; // Success! Exit early
-      }
-
-      console.warn("AudioContext is suspended or failed; falling back to Web Speech synthesis.");
-    } catch (err: any) {
-      if (err.name === "AbortError") {
-        // Request was cancelled intentionally, do nothing
+  // Helper to fetch voices asynchronously to avoid empty list on mobile Safari/Chrome
+  const getVoicesAsync = (): Promise<SpeechSynthesisVoice[]> => {
+    return new Promise((resolve) => {
+      if (typeof window === "undefined" || !window.speechSynthesis) {
+        resolve([]);
         return;
       }
-      console.warn("Gemini TTS failed, falling back to Web Speech synthesis:", err);
-    }
-
-    // --- FALLBACK: Native Web Speech API ---
-    setIsUsingGeminiVoice(false);
-    
-    if (typeof window === "undefined" || !window.speechSynthesis) {
-      setIsPlayingSpeech(false);
-      return;
-    }
-
-    // Unstick Web Speech synthesis
-    try {
-      window.speechSynthesis.cancel();
-      if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
+      let voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        resolve(voices);
+        return;
       }
-    } catch (e) {
-      console.error("Failed to unstick speechSynthesis:", e);
-    }
-
-    const utterance = new SpeechSynthesisUtterance(cleanedText);
-    utteranceRef.current = utterance; // Prevent garbage collection
-    utterance.lang = "zh-CN";
-    utterance.rate = speechRate;
-    utterance.pitch = speechPitch;
-
-    // High-Fidelity Chinese Female Voice Scoring & Selection System
-    const voices = window.speechSynthesis.getVoices();
-    const zhVoices = voices.filter(
-      (v) =>
-        v.lang.toLowerCase().startsWith("zh") ||
-        v.lang.toLowerCase().includes("zh-") ||
-        v.lang.toLowerCase().includes("zh_")
-    );
-
-    let bestVoice: SpeechSynthesisVoice | null = null;
-    let maxScore = -9999;
-
-    zhVoices.forEach((v) => {
-      const name = v.name.toLowerCase();
-      const lang = v.lang.toLowerCase();
-      let score = 0;
-
-      // Prioritize Mainland Mandarin (zh-CN)
-      if (lang.includes("cn") || lang.includes("zh_cn")) {
-        score += 30;
-      } else if (lang.includes("tw") || lang.includes("hk")) {
-        score += 15;
-      }
-
-      // Strong priority for female voice indicators
-      const femaleKeywords = [
-        "xiaoxiao", "tingting", "ting-ting", "yaoyao", "huihui", "meijia", "mei-jia", 
-        "lili", "hanhan", "yating", "siri", "xiaorui", "xiaoyi", "xiaoshuang", "xiaochen",
-        "xiaoyan", "female", "girl", "lady", "woman", "nü", "sweet", "natural", "lulu", "shanshan"
-      ];
-      femaleKeywords.forEach((keyword) => {
-        if (name.includes(keyword)) {
-          score += 40;
+      
+      const handleVoicesChanged = () => {
+        const updatedVoices = window.speechSynthesis.getVoices();
+        if (updatedVoices.length > 0) {
+          window.speechSynthesis.removeEventListener("voiceschanged", handleVoicesChanged);
+          resolve(updatedVoices);
         }
-      });
-
-      // HEAVILY penalize male voices
-      const maleKeywords = [
-        "yunyang", "yunjian", "yunxi", "yunye", "yunhe", "yunze", "kangkang", "zhiwei", 
-        "lidong", "kuan", "male", "man", "boy", "gentleman", "nan"
-      ];
-      maleKeywords.forEach((keyword) => {
-        if (name.includes(keyword)) {
-          score -= 150;
+      };
+      
+      window.speechSynthesis.addEventListener("voiceschanged", handleVoicesChanged);
+      
+      let attempts = 0;
+      const interval = setInterval(() => {
+        attempts++;
+        const currentVoices = window.speechSynthesis.getVoices();
+        if (currentVoices.length > 0 || attempts > 20) {
+          clearInterval(interval);
+          window.speechSynthesis.removeEventListener("voiceschanged", handleVoicesChanged);
+          resolve(currentVoices);
         }
-      });
-
-      if (name.includes("online") || name.includes("natural")) {
-        score += 20;
-      }
-
-      if (name.includes("microsoft") || name.includes("apple") || name.includes("google")) {
-        score += 5;
-      }
-
-      if (score > maxScore) {
-        maxScore = score;
-        bestVoice = v;
-      }
+      }, 50);
     });
-
-    const sweetVoice = bestVoice || zhVoices[0] || voices.find((v) => v.lang.toLowerCase().includes("zh"));
-
-    if (sweetVoice) {
-      utterance.voice = sweetVoice;
-    }
-
-    utterance.onstart = () => setIsPlayingSpeech(true);
-    utterance.onend = () => {
-      setIsPlayingSpeech(false);
-      setIsUsingGeminiVoice(false);
-      utteranceRef.current = null;
-    };
-    utterance.onerror = () => {
-      setIsPlayingSpeech(false);
-      setIsUsingGeminiVoice(false);
-      utteranceRef.current = null;
-    };
-
-    window.speechSynthesis.speak(utterance);
-
-    // Workaround for Chrome pause-on-start bug
-    try {
-      if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-      }
-    } catch (e) {}
   };
 
-  // Helper to play raw PCM 16-bit 24kHz Base64
-  const playGeminiAudioBuffer = async (base64Data: string): Promise<boolean> => {
+  // Voice Read Aloud (High-Fidelity Chinese Female Voice with HTML5 streaming and Web Speech Fallback)
+  const speakText = (text: string): Promise<void> => {
+    return new Promise((resolve) => {
+      // 1. Stop all current speech and fetch requests immediately
+      stopSpeaking();
+
+      if (isMuted) {
+        resolve();
+        return;
+      }
+
+      // Clean up text for TTS (remove brackets, math symbols, emoji markers that sound weird in spoken Chinese)
+      const cleanedText = text
+        .replace(/[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF]/g, "")
+        .replace(/[❌❓⭐🪙🌟🎉🐥🪵🌳🐼🍎🟣💡🗺️🚀🔒🧩💪👀✨🎈]/g, "")
+        .replace(/[【】\[\]（）()]/g, " ") // Clean brackets to prevent reading them out or causing awkward pauses
+        .replace(/A/g, "甲")
+        .replace(/B/g, "乙")
+        .replace(/C/g, "丙")
+        .replace(/=/g, "等于")
+        .replace(/\+/g, "加上")
+        .replace(/-/g, "减去")
+        .replace(/\*/g, "乘以")
+        .replace(/\//g, "除以");
+
+      try {
+        setIsPlayingSpeech(true);
+        setIsUsingGeminiVoice(true);
+
+        if (!globalAudioRef.current) {
+          globalAudioRef.current = new Audio();
+        }
+
+        const audio = globalAudioRef.current;
+        // Point directly to our high-fidelity backend audio stream
+        audio.src = `/api/tts/stream?text=${encodeURIComponent(cleanedText)}`;
+        
+        audio.onplay = () => {
+          setIsPlayingSpeech(true);
+        };
+        
+        audio.onended = () => {
+          setIsPlayingSpeech(false);
+          resolve();
+        };
+        
+        audio.onerror = (e) => {
+          console.warn("HTML5 audio stream failed, falling back to Web Speech:", e);
+          fallbackToWebSpeech(cleanedText).then(resolve);
+        };
+
+        // Try to play
+        audio.play().catch((err) => {
+          console.warn("Autoplay or playback interrupted on mobile, falling back to Web Speech:", err);
+          fallbackToWebSpeech(cleanedText).then(resolve);
+        });
+      } catch (err) {
+        console.warn("Failed to set up HTML5 audio, falling back to Web Speech:", err);
+        fallbackToWebSpeech(cleanedText).then(resolve);
+      }
+    });
+  };
+
+  // --- FALLBACK: Web Speech Synthesis ---
+  const fallbackToWebSpeech = (text: string): Promise<void> => {
+    return new Promise((resolve) => {
+      setIsUsingGeminiVoice(false);
+      
+      if (typeof window === "undefined" || !window.speechSynthesis) {
+        setIsPlayingSpeech(false);
+        resolve();
+        return;
+      }
+
+      // Unstick Web Speech synthesis
+      try {
+        window.speechSynthesis.cancel();
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+      } catch (e) {
+        console.error("Failed to unstick speechSynthesis:", e);
+      }
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utteranceRef.current = utterance; // Prevent garbage collection
+      utterance.lang = "zh-CN";
+      utterance.rate = speechRate;
+      utterance.pitch = speechPitch;
+
+      // Select best voice
+      getVoicesAsync().then((voices) => {
+        const zhVoices = voices.filter(
+          (v) =>
+            v.lang.toLowerCase().startsWith("zh") ||
+            v.lang.toLowerCase().includes("zh-") ||
+            v.lang.toLowerCase().includes("zh_")
+        );
+
+        let bestVoice: SpeechSynthesisVoice | null = null;
+        let maxScore = -9999;
+
+        zhVoices.forEach((v) => {
+          const name = v.name.toLowerCase();
+          const lang = v.lang.toLowerCase();
+          let score = 0;
+
+          if (lang.includes("cn") || lang.includes("zh_cn")) {
+            score += 30;
+          } else if (lang.includes("tw") || lang.includes("hk")) {
+            score += 15;
+          }
+
+          const femaleKeywords = [
+            "xiaoxiao", "tingting", "ting-ting", "yaoyao", "huihui", "meijia", "mei-jia", 
+            "lili", "hanhan", "yating", "siri", "xiaorui", "xiaoyi", "xiaoshuang", "xiaochen",
+            "xiaoyan", "female", "girl", "lady", "woman", "nü", "sweet", "natural", "lulu", "shanshan",
+            "x-sf", "x-sfg", "x-cnd", "x-cf", "x-ssc"
+          ];
+          femaleKeywords.forEach((keyword) => {
+            if (name.includes(keyword)) {
+              score += 40;
+            }
+          });
+
+          const maleKeywords = [
+            "yunyang", "yunjian", "yunxi", "yunye", "yunhe", "yunze", "kangkang", "zhiwei", 
+            "lidong", "kuan", "male", "man", "boy", "gentleman", "nan",
+            "x-sm", "x-md", "x-m-", "-male"
+          ];
+          maleKeywords.forEach((keyword) => {
+            if (name.includes(keyword)) {
+              score -= 150;
+            }
+          });
+
+          if (name.includes("online") || name.includes("natural")) {
+            score += 20;
+          }
+
+          if (name.includes("microsoft") || name.includes("apple") || name.includes("google")) {
+            score += 5;
+          }
+
+          if (score > maxScore) {
+            maxScore = score;
+            bestVoice = v;
+          }
+        });
+
+        const sweetVoice = bestVoice || zhVoices[0] || voices.find((v) => v.lang.toLowerCase().includes("zh"));
+
+        if (sweetVoice) {
+          utterance.voice = sweetVoice;
+        }
+
+        utterance.onstart = () => setIsPlayingSpeech(true);
+        utterance.onend = () => {
+          setIsPlayingSpeech(false);
+          utteranceRef.current = null;
+          resolve();
+        };
+        utterance.onerror = () => {
+          setIsPlayingSpeech(false);
+          utteranceRef.current = null;
+          resolve();
+        };
+
+        window.speechSynthesis.speak(utterance);
+
+        try {
+          if (window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+          }
+        } catch (e) {}
+      });
+    });
+  };
+
+  // Dual-format high-fidelity play helper (supports both Base64 MP3 decoding and raw PCM decoding)
+  const playGeminiAudioBuffer = async (base64Data: string, format: "mp3" | "pcm" = "mp3"): Promise<boolean> => {
     try {
       const binaryString = window.atob(base64Data);
       const len = binaryString.length;
@@ -317,50 +359,74 @@ export default function App() {
       for (let i = 0; i < len; i++) {
         bytes[i] = binaryString.charCodeAt(i);
       }
-      
-      const numSamples = len / 2;
-      const int16Array = new Int16Array(bytes.buffer);
-      
-      const sampleRate = 24000;
+
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       if (!audioContextRef.current || audioContextRef.current.state === "closed") {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate });
-      }
-      
-      if (audioContextRef.current.state === "suspended") {
         try {
-          await audioContextRef.current.resume();
+          audioContextRef.current = new AudioContextClass();
         } catch (e) {
-          console.warn("Failed to resume audioContext:", e);
+          console.warn("Failed to construct AudioContext:", e);
+          return false;
         }
       }
-      
+
       const ctx = audioContextRef.current;
       if (ctx.state === "suspended") {
-        console.warn("AudioContext remains suspended. Skipping high-fidelity play.");
+        try {
+          await ctx.resume();
+        } catch (e) {
+          console.warn("Failed to resume AudioContext:", e);
+        }
+      }
+
+      if (ctx.state === "suspended") {
+        console.warn("AudioContext remains suspended. Skipping Web Audio playback.");
         return false;
       }
-      
-      const buffer = ctx.createBuffer(1, numSamples, sampleRate);
-      const channelData = buffer.getChannelData(0);
-      
-      for (let i = 0; i < numSamples; i++) {
-        channelData[i] = int16Array[i] / 32768.0;
+
+      if (format === "mp3") {
+        // High-speed native MP3 decoding (supports Google Translate TTS base64)
+        const decodedBuffer = await ctx.decodeAudioData(bytes.buffer);
+        const source = ctx.createBufferSource();
+        source.buffer = decodedBuffer;
+        source.connect(ctx.destination);
+        
+        source.onended = () => {
+          setIsPlayingSpeech(false);
+          setIsUsingGeminiVoice(false);
+        };
+        
+        audioSourceRef.current = source;
+        source.start(0);
+        return true;
+      } else {
+        // Raw PCM 16-bit 24kHz fallback decoding (supports Gemini model response)
+        const numSamples = len / 2;
+        const int16Array = new Int16Array(bytes.buffer);
+        const sampleRate = 24000;
+        
+        const buffer = ctx.createBuffer(1, numSamples, sampleRate);
+        const channelData = buffer.getChannelData(0);
+        
+        for (let i = 0; i < numSamples; i++) {
+          channelData[i] = int16Array[i] / 32768.0;
+        }
+        
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+        
+        source.onended = () => {
+          setIsPlayingSpeech(false);
+          setIsUsingGeminiVoice(false);
+        };
+        
+        audioSourceRef.current = source;
+        source.start(0);
+        return true;
       }
-      
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
-      source.connect(ctx.destination);
-      
-      source.onended = () => {
-        setIsPlayingSpeech(false);
-        setIsUsingGeminiVoice(false);
-      };
-      
-      audioSourceRef.current = source;
-      source.start(0);
-      return true;
     } catch (err) {
-      console.error("Error decoding or playing Web Audio buffer:", err);
+      console.error("Error decoding or playing Audio buffer:", err);
       return false;
     }
   };
@@ -372,7 +438,15 @@ export default function App() {
       ttsAbortControllerRef.current = null;
     }
 
-    // 2. Stop Web Speech speechSynthesis
+    // 2. Stop HTML5 Streaming Audio player
+    if (globalAudioRef.current) {
+      try {
+        globalAudioRef.current.pause();
+        globalAudioRef.current.currentTime = 0;
+      } catch (e) {}
+    }
+
+    // 3. Stop Web Speech speechSynthesis
     if (typeof window !== "undefined" && window.speechSynthesis) {
       try {
         window.speechSynthesis.cancel();
@@ -384,14 +458,12 @@ export default function App() {
       }
     }
     
-    // 3. Stop Web Audio PCM Source
+    // 4. Stop Web Audio buffers
     if (audioSourceRef.current) {
       try {
         audioSourceRef.current.stop();
         audioSourceRef.current.disconnect();
-      } catch (e) {
-        // Already stopped or disconnected
-      }
+      } catch (e) {}
       audioSourceRef.current = null;
     }
 
@@ -441,13 +513,61 @@ export default function App() {
     }
   }, [activeWorldId, activeLevel, activeSubject]);
 
-  // Voice listener and AudioContext auto-unlocker
+  // Automatically scroll to the question box when entering a level, or to the top when switching worlds/subjects
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      if (activeLevel) {
+        // Wait a brief moment to ensure the DOM has updated and element is rendered
+        setTimeout(() => {
+          const element = document.getElementById("game-question-box");
+          if (element) {
+            smoothScrollElementIntoView(element, "start", 1000); // 1000ms duration for gentle, smooth transition
+          } else {
+            smoothScrollTo(0, 1000);
+          }
+        }, 120);
+      } else {
+        smoothScrollTo(0, 800);
+      }
+    }
+  }, [activeLevel?.id, activeWorldId, activeSubject]);
+
+  // Voice listener and AudioContext auto-unlocker (optimized for mobile Safari/iOS)
   useEffect(() => {
     const handleVoicesChanged = () => {};
-    const unlockAudio = async () => {
-      if (audioContextRef.current && audioContextRef.current.state === "suspended") {
-        await audioContextRef.current.resume().catch(() => {});
+    
+    const unlockAudio = () => {
+      // 1. Initialize and resume AudioContext synchronously inside user touch/click gesture
+      if (typeof window !== "undefined") {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          if (!audioContextRef.current || audioContextRef.current.state === "closed") {
+            try {
+              audioContextRef.current = new AudioContextClass({ sampleRate: 24000 });
+            } catch (e) {
+              console.warn("Failed to init AudioContext on gesture:", e);
+            }
+          }
+          if (audioContextRef.current && audioContextRef.current.state === "suspended") {
+            audioContextRef.current.resume().catch((err) => console.warn("Failed to resume context on gesture:", err));
+          }
+        }
       }
+
+      // 2. Play a silent dummy speech synthesis to trigger TTS voice loading on mobile
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        try {
+          const silentUtterance = new SpeechSynthesisUtterance("");
+          silentUtterance.volume = 0;
+          window.speechSynthesis.speak(silentUtterance);
+        } catch (e) {
+          console.warn("Failed to trigger silent speech:", e);
+        }
+      }
+
+      // Remove handlers so we only trigger this once on first user gesture
+      window.removeEventListener("click", unlockAudio);
+      window.removeEventListener("touchstart", unlockAudio);
     };
 
     if (typeof window !== "undefined") {
@@ -826,6 +946,7 @@ export default function App() {
           <MascotElf
             expression={mascotExpression}
             speech={helperSpeech}
+            subject={activeSubject}
             onClickBubble={() => {
               if (activeLevel) {
                 setHelperSpeech(activeLevel.hint);
@@ -835,7 +956,7 @@ export default function App() {
 
           {/* Core Level-specific Gameplay Sandboxes */}
           {activeLevel ? (
-            <div className="bg-white border-4 border-indigo-300 rounded-4xl p-6 md:p-8 shadow-[6px_6px_0px_0px_#475569] flex flex-col gap-6 relative">
+            <div id="game-question-box" className="bg-white border-4 border-indigo-300 rounded-4xl p-6 md:p-8 shadow-[6px_6px_0px_0px_#475569] flex flex-col gap-6 relative">
               {/* Back navigation button */}
               <div className="flex items-center justify-between border-b-2 border-dashed border-slate-100 pb-4 select-none">
                 <button
@@ -1062,6 +1183,8 @@ export default function App() {
                     levelData={activeLevel.data}
                     onSolved={handleLevelSolved}
                     onIncorrect={handleLevelFailed}
+                    speakText={speakText}
+                    stopSpeaking={stopSpeaking}
                   />
                 )}
               </div>

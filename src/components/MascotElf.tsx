@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from "react";
 import { Sparkles, HelpCircle, Volume2 } from "lucide-react";
 import { SoundEffects } from "./SoundEffects";
+import { Subject } from "../types";
 
 interface MascotElfProps {
   expression?: "idle" | "happy" | "thinking" | "sad";
   speech?: string;
   onClickBubble?: () => void;
+  subject?: Subject;
 }
 
-const MOTIVATIONAL_QUOTES = [
+const MATH_QUOTES = [
   "奥数其实就像捉迷藏，找到规律就能赢！",
   "别着急，动动小脑筋，小奥相信你一定可以！",
   "我们一起来假设一下，是不是就变简单啦？",
@@ -16,10 +18,19 @@ const MOTIVATIONAL_QUOTES = [
   "真聪明！每一个数学家都是从这样的小题目开始的哦！"
 ];
 
+const CHINESE_QUOTES = [
+  "熟读唐诗三百首，不会作诗也会吟哦！",
+  "字里行间都是精美画卷，跟着小奥感受唐诗的美妙吧！",
+  "别着急，大声跟读出来，小奥相信你一定能熟练背诵！",
+  "哇！你的普通话朗读声音真动听，很有小诗人的儒雅风范呢！",
+  "书读百遍，其义自见。多读几遍，你就更能领悟其中的智慧啦！"
+];
+
 export const MascotElf: React.FC<MascotElfProps> = ({
   expression = "idle",
   speech = "嗨！我是奥数精灵小奥。点击关卡，和我一起开启奇妙的数学冒险吧！",
-  onClickBubble
+  onClickBubble,
+  subject = Subject.Math
 }) => {
   const [localSpeech, setLocalSpeech] = useState(speech);
   const [isBouncing, setIsBouncing] = useState(false);
@@ -31,7 +42,8 @@ export const MascotElf: React.FC<MascotElfProps> = ({
   const handleElfClick = () => {
     SoundEffects.playClick();
     setIsBouncing(true);
-    const randomQuote = MOTIVATIONAL_QUOTES[Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length)];
+    const quotes = subject === Subject.Chinese ? CHINESE_QUOTES : MATH_QUOTES;
+    const randomQuote = quotes[Math.floor(Math.random() * quotes.length)];
     setLocalSpeech(randomQuote);
     setTimeout(() => setIsBouncing(false), 800);
   };
@@ -97,7 +109,7 @@ export const MascotElf: React.FC<MascotElfProps> = ({
   };
 
   return (
-    <div className="flex flex-col md:flex-row items-center gap-5 bg-white p-5 rounded-3xl border-4 border-indigo-300 shadow-[6px_6px_0px_0px_#475569] max-w-2xl mx-auto my-4 relative overflow-visible select-none">
+    <div className="flex flex-col md:flex-row items-center gap-5 bg-white p-5 rounded-3xl border-4 border-indigo-300 shadow-[6px_6px_0px_0px_#475569] w-full max-w-2xl h-[260px] md:h-[155px] mx-auto my-4 relative overflow-visible select-none flex-shrink-0">
       {/* Sparkle background elements */}
       <div className="absolute top-2 left-4 text-indigo-500 animate-pulse">
         <Sparkles className="w-5 h-5" />
@@ -109,7 +121,7 @@ export const MascotElf: React.FC<MascotElfProps> = ({
       {/* Elf SVG Avatar */}
       <div
         onClick={handleElfClick}
-        className={`w-24 h-24 relative flex-shrink-0 cursor-pointer transform transition-all active:scale-90 ${
+        className={`w-20 h-20 md:w-24 md:h-24 relative flex-shrink-0 cursor-pointer transform transition-all active:scale-90 ${
           isBouncing ? "animate-bounce" : "animate-bounce"
         }`}
         style={{ animationDuration: isBouncing ? "0.4s" : "4.5s" }}
@@ -156,20 +168,20 @@ export const MascotElf: React.FC<MascotElfProps> = ({
 
       {/* Speech Bubble */}
       <div
-        className="flex-1 text-left relative cursor-pointer"
+        className="flex-1 text-left relative cursor-pointer w-full md:w-auto"
         onClick={onClickBubble}
       >
         {/* Triangle pointer */}
         <div className="absolute left-1/2 -top-3.5 md:-left-3.5 md:top-6 transform -translate-x-1/2 md:translate-x-0 rotate-45 w-4 h-4 bg-white border-l-4 border-t-4 border-indigo-400 md:border-r-0 md:border-b-0" />
 
-        <div className="bg-white p-4 rounded-2xl border-4 border-indigo-400 shadow-[4px_4px_0px_0px_#4338ca] hover:bg-indigo-50/20 transition-colors">
-          <p className="text-sm font-bold text-slate-800 leading-relaxed">
+        <div className="bg-white p-3 md:p-4 rounded-2xl border-4 border-indigo-400 shadow-[4px_4px_0px_0px_#4338ca] hover:bg-indigo-50/20 transition-colors h-[115px] flex flex-col justify-between overflow-hidden">
+          <div className="overflow-y-auto pr-1 flex-1 text-xs md:text-sm font-bold text-slate-800 leading-relaxed scrollbar-thin max-h-[52px]">
             {localSpeech}
-          </p>
-          <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-dashed border-indigo-100 text-[10px] text-indigo-600 font-extrabold">
+          </div>
+          <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-dashed border-indigo-100 text-[10px] text-indigo-600 font-extrabold flex-shrink-0">
             <span className="flex items-center gap-1">
               <HelpCircle className="w-3.5 h-3.5" />
-              奥数精灵小奥
+              {subject === Subject.Chinese ? "国学精灵小奥" : "奥数精灵小奥"}
             </span>
             <span>点击小奥或对话框有惊喜 🌟</span>
           </div>

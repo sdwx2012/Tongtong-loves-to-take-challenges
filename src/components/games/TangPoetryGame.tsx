@@ -15,12 +15,16 @@ interface TangPoetryGameProps {
   };
   onSolved: (stars: number) => void;
   onIncorrect?: () => void;
+  speakText?: (text: string) => Promise<void>;
+  stopSpeaking?: () => void;
 }
 
 export const TangPoetryGame: React.FC<TangPoetryGameProps> = ({
   levelData,
   onSolved,
-  onIncorrect
+  onIncorrect,
+  speakText,
+  stopSpeaking
 }) => {
   const { title, author, dynasty, content, pinyin, cleanWords, translation } = levelData;
 
@@ -60,43 +64,167 @@ export const TangPoetryGame: React.FC<TangPoetryGameProps> = ({
   }, []);
 
   const stopAllSpeech = () => {
+    if (stopSpeaking) {
+      stopSpeaking();
+    }
     if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
+      try {
+        window.speechSynthesis.cancel();
+      } catch (e) {}
     }
     setIsPlayingLine(null);
     setIsPlayingFull(false);
   };
 
-  // Single line voice read aloud (repeat reading practice)
-  const speakLine = (lineText: string, index: number) => {
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
+  // Helper to fetch voices asynchronously to avoid empty list on mobile Safari/Chrome
+  const getVoicesAsync = (): Promise<SpeechSynthesisVoice[]> => {
+    return new Promise((resolve) => {
+      if (typeof window === "undefined" || !window.speechSynthesis) {
+        resolve([]);
+        return;
+      }
+      let voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        resolve(voices);
+        return;
+      }
+      
+      const handleVoicesChanged = () => {
+        const updatedVoices = window.speechSynthesis.getVoices();
+        if (updatedVoices.length > 0) {
+          window.speechSynthesis.removeEventListener("voiceschanged", handleVoicesChanged);
+          resolve(updatedVoices);
+        }
+      };
+      
+      window.speechSynthesis.addEventListener("voiceschanged", handleVoicesChanged);
+      
+      let attempts = 0;
+      const interval = setInterval(() => {
+        attempts++;
+        const currentVoices = window.speechSynthesis.getVoices();
+        if (currentVoices.length > 0 || attempts > 20) {
+          clearInterval(interval);
+          window.speechSynthesis.removeEventListener("voiceschanged", handleVoicesChanged);
+          resolve(currentVoices);
+        }
+      }, 50);
+    });
+  };
 
+  const getBestChineseVoice = (voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null => {
+    const zhVoices = voices.filter(
+      (v) =>
+        v.lang.toLowerCase().startsWith("zh") ||
+        v.lang.toLowerCase().includes("zh-") ||
+        v.lang.toLowerCase().includes("zh_")
+    );
+
+    let bestVoice: SpeechSynthesisVoice | null = null;
+    let maxScore = -9999;
+
+    zhVoices.forEach((v) => {
+      const name = v.name.toLowerCase();
+      const lang = v.lang.toLowerCase();
+      let score = 0;
+
+      // Prioritize Mainland Mandarin (zh-CN)
+      if (lang.includes("cn") || lang.includes("zh_cn")) {
+        score += 30;
+      } else if (lang.includes("tw") || lang.includes("hk")) {
+        score += 15;
+      }
+
+      // Strong priority for female voice indicators
+      const femaleKeywords = [
+        "xiaoxiao", "tingting", "ting-ting", "yaoyao", "huihui", "meijia", "mei-jia", 
+        "lili", "hanhan", "yating", "siri", "xiaorui", "xiaoyi", "xiaoshuang", "xiaochen",
+        "xiaoyan", "female", "girl", "lady", "woman", "nü", "sweet", "natural", "lulu", "shanshan",
+        "x-sf", "x-sfg", "x-cnd", "x-cf", "x-ssc"
+      ];
+      femaleKeywords.forEach((keyword) => {
+        if (name.includes(keyword)) {
+          score += 40;
+        }
+      });
+
+      // HEAVILY penalize male voices
+      const maleKeywords = [
+        "yunyang", "yunjian", "yunxi", "yunye", "yunhe", "yunze", "kangkang", "zhiwei", 
+        "lidong", "kuan", "male", "man", "boy", "gentleman", "nan",
+        "x-sm", "x-md", "x-m-", "-male"
+      ];
+      maleKeywords.forEach((keyword) => {
+        if (name.includes(keyword)) {
+          score -= 150;
+        }
+      });
+
+      if (name.includes("online") || name.includes("natural")) {
+        score += 20;
+      }
+
+      if (name.includes("microsoft") || name.includes("apple") || name.includes("google")) {
+        score += 5;
+      }
+
+      if (score > maxScore) {
+        maxScore = score;
+        bestVoice = v;
+      }
+    });
+
+    return bestVoice || zhVoices[0] || voices.find((v) => v.lang.toLowerCase().includes("zh")) || null;
+  };
+
+  // Single line voice read aloud (repeat reading practice)
+  const speakLine = async (lineText: string, index: number) => {
     stopAllSpeech();
     SoundEffects.playClick();
     setIsPlayingLine(index);
 
     const cleanText = lineText.replace(/[，。？！、]/g, "");
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = "zh-CN";
-    utterance.rate = 0.85; // Slightly slower for children to hear clearly
 
-    // Select suitable Chinese voice
-    const voices = window.speechSynthesis.getVoices();
-    const zhVoice = voices.find((v) => v.lang.toLowerCase().includes("zh"));
-    if (zhVoice) {
-      utterance.voice = zhVoice;
+    if (speakText) {
+      try {
+        await speakText(cleanText);
+      } catch (e) {
+        console.warn("Failed to speak line via prop, falling back:", e);
+      } finally {
+        setIsPlayingLine(null);
+      }
+    } else {
+      // Local fallback
+      if (typeof window === "undefined" || !window.speechSynthesis) {
+        setIsPlayingLine(null);
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.lang = "zh-CN";
+      utterance.rate = 0.85; // Slightly slower for children to hear clearly
+
+      const voices = await getVoicesAsync();
+      const sweetVoice = getBestChineseVoice(voices);
+      if (sweetVoice) {
+        utterance.voice = sweetVoice;
+      }
+
+      utterance.onend = () => setIsPlayingLine(null);
+      utterance.onerror = () => setIsPlayingLine(null);
+
+      window.speechSynthesis.speak(utterance);
+      
+      try {
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+      } catch (e) {}
     }
-
-    utterance.onend = () => setIsPlayingLine(null);
-    utterance.onerror = () => setIsPlayingLine(null);
-
-    window.speechSynthesis.speak(utterance);
   };
 
   // Full poem voice read aloud
-  const speakFullPoem = () => {
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-
+  const speakFullPoem = async () => {
     if (isPlayingFull) {
       stopAllSpeech();
       return;
@@ -107,24 +235,47 @@ export const TangPoetryGame: React.FC<TangPoetryGameProps> = ({
     setIsPlayingFull(true);
 
     const fullText = `《${title}》，唐，${author}。${content.join("")}`;
-    const utterance = new SpeechSynthesisUtterance(fullText);
-    utterance.lang = "zh-CN";
-    utterance.rate = 0.9;
 
-    const voices = window.speechSynthesis.getVoices();
-    const zhVoice = voices.find((v) => v.lang.toLowerCase().includes("zh"));
-    if (zhVoice) {
-      utterance.voice = zhVoice;
+    if (speakText) {
+      try {
+        await speakText(fullText);
+      } catch (e) {
+        console.warn("Failed to speak full poem via prop, falling back:", e);
+      } finally {
+        setIsPlayingFull(false);
+      }
+    } else {
+      // Local fallback
+      if (typeof window === "undefined" || !window.speechSynthesis) {
+        setIsPlayingFull(false);
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(fullText);
+      utterance.lang = "zh-CN";
+      utterance.rate = 0.9;
+
+      const voices = await getVoicesAsync();
+      const sweetVoice = getBestChineseVoice(voices);
+      if (sweetVoice) {
+        utterance.voice = sweetVoice;
+      }
+
+      utterance.onend = () => setIsPlayingFull(false);
+      utterance.onerror = () => setIsPlayingFull(false);
+
+      window.speechSynthesis.speak(utterance);
+
+      try {
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+      } catch (e) {}
     }
-
-    utterance.onend = () => setIsPlayingFull(false);
-    utterance.onerror = () => setIsPlayingFull(false);
-
-    window.speechSynthesis.speak(utterance);
   };
 
   // Real-time voice recognition logic
-  const startListening = () => {
+  const startListening = async () => {
     SoundEffects.playClick();
     setMicError(null);
 
@@ -138,6 +289,20 @@ export const TangPoetryGame: React.FC<TangPoetryGameProps> = ({
 
     if (isListening) {
       stopListening();
+      return;
+    }
+
+    // Explicitly request microphone permission on mobile to trigger prompt
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        // Request a temporary audio stream to force browser to prompt for permission
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Release the stream immediately to avoid keeping microphone active unnecessarily
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    } catch (err: any) {
+      console.warn("Microphone permission denied or error:", err);
+      setMicError("请允许网页使用您的麦克风权限（可在浏览器地址栏或手机系统设置中开启），或者点击‘模拟通关’体验哦！");
       return;
     }
 

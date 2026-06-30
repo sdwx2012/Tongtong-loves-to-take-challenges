@@ -2,6 +2,7 @@ import React from "react";
 import { Star, Lock, Trophy, Play, ArrowLeft, CheckCircle2 } from "lucide-react";
 import { World, Level, WorldId, UserProgress, Subject } from "../types";
 import { SoundEffects } from "./SoundEffects";
+import { smoothScrollElementIntoView } from "../utils/scroll";
 
 interface LevelMapProps {
   worlds: World[];
@@ -35,6 +36,27 @@ export const LevelMap: React.FC<LevelMapProps> = ({
     if (!previousLevel) return true;
     return !!userProgress.completedLevels[previousLevel.id];
   };
+
+  // Automatically scroll to the first unlocked but uncompleted level when entering a world
+  React.useEffect(() => {
+    if (activeWorldId && currentWorld) {
+      // Find the first level that is unlocked but not completed
+      const targetLevel = currentWorld.levels.find((level, index) => {
+        const unlocked = isLevelUnlocked(level, index);
+        const completed = !!userProgress.completedLevels[level.id];
+        return unlocked && !completed;
+      }) || currentWorld.levels[0]; // fallback to first level if all completed or none unlocked
+
+      if (targetLevel) {
+        setTimeout(() => {
+          const element = document.getElementById(`level-node-${targetLevel.id}`);
+          if (element) {
+            smoothScrollElementIntoView(element, "center", 1200); // Gentle 1200ms easing scroll
+          }
+        }, 150);
+      }
+    }
+  }, [activeWorldId, currentWorld?.id, userProgress.completedLevels]);
 
   const handleWorldClick = (world: World) => {
     if (!isWorldUnlocked(world.id)) {
@@ -266,6 +288,7 @@ export const LevelMap: React.FC<LevelMapProps> = ({
               return (
                 <div
                   key={level.id}
+                  id={`level-node-${level.id}`}
                   onClick={() => handleLevelClick(level, unlocked)}
                   className={`group rounded-2xl p-5 border-3 relative overflow-hidden transition-all duration-300 transform active:scale-95 cursor-pointer flex flex-col justify-between min-h-[170px] ${
                     unlocked
@@ -368,6 +391,7 @@ export const LevelMap: React.FC<LevelMapProps> = ({
               return (
                 <div
                   key={level.id}
+                  id={`level-node-${level.id}`}
                   className={`flex flex-col md:flex-row items-center gap-4 transition-transform duration-300 ${offsetClass}`}
                 >
                   {/* Level Node Button */}

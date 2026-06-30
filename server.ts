@@ -171,7 +171,7 @@ async function startServer() {
     }
   });
 
-  // API endpoint for Text-to-Speech using Gemini TTS
+  // API endpoint for Text-to-Speech using high-quality Google Translate TTS with Gemini Fallback
   app.post("/api/tts", async (req, res) => {
     try {
       const { text, voice } = req.body;
@@ -180,20 +180,39 @@ async function startServer() {
         return res.status(400).json({ error: "Text is required for TTS." });
       }
 
+      console.log(`Generating TTS Base64 for: "${text}"`);
+
+      // 1. Try Google Translate TTS first - sweet Chinese female voice, extremely fast and reliable
+      try {
+        const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=zh-CN&client=tw-ob&q=${encodeURIComponent(text)}`;
+        const response = await fetch(ttsUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://translate.google.com/"
+          }
+        });
+
+        if (response.ok) {
+          const arrayBuffer = await response.arrayBuffer();
+          const base64Audio = Buffer.from(arrayBuffer).toString("base64");
+          return res.json({ audio: base64Audio, format: "mp3" });
+        } else {
+          console.warn(`Google Translate TTS failed with status ${response.status}. Falling back to Gemini TTS.`);
+        }
+      } catch (googleError) {
+        console.warn("Google Translate TTS failed, falling back to Gemini:", googleError);
+      }
+
+      // 2. Fallback to Gemini 3.1 TTS model
       if (!ai) {
         return res.status(500).json({
           error: "Gemini client is not initialized because GEMINI_API_KEY is missing."
         });
       }
 
-      // Voice name mapping or validation
-      // 'Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'
       const validVoices = ["Puck", "Charon", "Kore", "Fenrir", "Zephyr"];
       const selectedVoice = validVoices.includes(voice) ? voice : "Kore";
 
-      console.log(`Generating TTS for: "${text}" with voice "${selectedVoice}"`);
-
-      // Request TTS from Gemini 3.1 TTS model
       const response = await ai.models.generateContent({
         model: "gemini-3.1-flash-tts-preview",
         contents: [{ parts: [{ text }] }],
@@ -213,12 +232,43 @@ async function startServer() {
         return res.status(500).json({ error: "Failed to generate speech audio from Gemini." });
       }
 
-      return res.json({ audio: base64Audio });
+      return res.json({ audio: base64Audio, format: "pcm" });
     } catch (error: any) {
-      console.error("Gemini TTS API Error in server:", error);
+      console.error("TTS API Error in server:", error);
       return res.status(500).json({
         error: error.message || "Internal server error during TTS generation."
       });
+    }
+  });
+
+  // Direct MP3 Audio Stream Proxy for HTML5 <audio> tag elements - highly compatible with mobile Safari/Chrome
+  app.get("/api/tts/stream", async (req, res) => {
+    try {
+      const text = req.query.text as string;
+      if (!text) {
+        return res.status(400).send("Text is required for TTS stream.");
+      }
+
+      const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=zh-CN&client=tw-ob&q=${encodeURIComponent(text)}`;
+      
+      const response = await fetch(ttsUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Referer": "https://translate.google.com/"
+        }
+      });
+
+      if (response.ok) {
+        res.setHeader("Content-Type", "audio/mpeg");
+        const arrayBuffer = await response.arrayBuffer();
+        return res.send(Buffer.from(arrayBuffer));
+      } else {
+        console.warn(`Google Translate TTS stream failed with status ${response.status}`);
+        return res.status(500).send("TTS stream retrieval failed.");
+      }
+    } catch (error: any) {
+      console.error("Error in TTS stream endpoint:", error);
+      return res.status(500).send(error.message || "Internal server error");
     }
   });
 
