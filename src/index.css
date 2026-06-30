@@ -1,0 +1,35 @@
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Quicksand:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Quicksand", "Fredoka", "Inter", system-ui, -apple-system, sans-serif;
+  --font-display: "Fredoka", "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+
+  /* Custom bounciness and playful colors if needed */
+  --animate-wiggle: wiggle 0.3s ease-in-out infinite;
+
+  @keyframes wiggle {
+    0%, 100% { transform: rotate(-3deg); }
+    50% { transform: rotate(3deg); }
+  }
+}
+
+/* Base style enhancements */
+body {
+  font-family: var(--font-sans);
+  background-color: #f0f4f8; /* Soft cool eye-safe blue-gray */
+}
+
+h1, h2, h3, h4, .font-display {
+  font-family: var(--font-display);
+}
+
+@keyframes wave {
+  0% { transform: scaleY(0.15); }
+  100% { transform: scaleY(1.1); }
+}
+
+.origin-bottom {
+  transform-origin: bottom;
+}
